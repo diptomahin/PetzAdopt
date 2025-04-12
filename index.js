@@ -32,9 +32,107 @@ async function run() {
 
         const petsCollection = client.db("petzAdopt").collection("pets");
         const campaignCollection = client.db("petzAdopt").collection("donationCampaigns");
-    
+        const usersCollection = client.db("petzAdopt").collection("users");
 
-       
+
+        // jwt
+        app.post('/jwt', async (req, res) => {
+            const user = req.body;
+            const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
+            res.send({ token });
+        })
+
+        const verifyToken = (req, res, next) => {
+            // console.log('inside verify token', req.headers.authorization);
+            if (!req.headers.authorization) {
+                // console.log('No authorization header');
+                return res.status(401).send({ message: 'unauthorized access' });
+            }
+            const token = req.headers.authorization.split(' ')[1];
+            jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
+                if (err) {
+                    // console.log('Token verification failed', err);
+                    return res.status(401).send({ message: 'unauthorized access' });
+                }
+                req.decoded = decoded;
+                // console.log('Token verified successfully');
+                next();
+            });
+        };
+
+        const verifyAdmin = async (req, res, next) => {
+            const email = req.decoded.email;
+            const query = { email: email };
+            const user = await usersCollection.findOne(query);
+            const isAdmin = user?.role === 'admin';
+            console.log('User role', user?.role);
+            if (!isAdmin) {
+                return res.status(403).send({ message: 'forbidden access' });
+            }
+            next();
+        }
+
+        app.get('/users/admin/:email', verifyToken, async (req, res) => {
+            const email = req.params.email;
+
+            if (email !== req.decoded.email) {
+                return res.status(403).send({ message: 'forbidden access' })
+            }
+
+            const query = { email: email };
+            const user = await usersCollection.findOne(query);
+            let admin = false;
+            if (user) {
+                admin = user?.role === 'admin';
+            }
+            res.send({ admin });
+        })
+
+
+        // save a user data in db
+        app.put('/user', async (req, res) => {
+            const user = req.body
+            const query = { email: user?.email }
+            // check if user already exists in db
+            const isExist = await usersCollection.findOne(query)
+            if (isExist) {
+                return res.send(isExist)
+
+            }
+            // save user for the first time
+            const options = { upsert: true }
+            const updateDoc = {
+                $set: {
+                    ...user,
+                    timestamp: new Date().toLocaleDateString(),
+                },
+            }
+            const result = await usersCollection.updateOne(query, updateDoc, options)
+            res.send(result)
+        })
+        app.get('/users/:email', verifyToken, async (req, res) => {
+            const email = req?.params?.email;
+
+            const query = { email }
+            const result = await usersCollection.findOne(query);
+            res.send(result);
+        })
+        app.get('/users', verifyToken, verifyAdmin, async (req, res) => {
+            const result = await usersCollection.find().toArray();
+            res.send(result);
+        })
+
+        app.put('/user/update/:id', verifyToken, verifyAdmin, async (req, res) => {
+            const id = req?.params?.id;
+            const query = { _id: new ObjectId(id) }
+            const updateDoc = {
+                $set: {
+                    role: 'admin'
+                }
+            }
+            const result = await usersCollection.updateOne(query, updateDoc);
+            res.send(result)
+        })
 
         //pets
         app.get('/all-pets', verifyToken, async (req, res) => {
@@ -138,7 +236,7 @@ async function run() {
                 res.status(500).json({ message: 'An error occurred while deleting the pet' });
             }
         });
-        
+
         //Campaigns
 
 
@@ -262,7 +360,7 @@ async function run() {
 
         });
 
-      
+
         // await client.db('admin').command({ ping: 1 })
         console.log(
             'Pinged your deployment. You successfully connected to MongoDB!'
