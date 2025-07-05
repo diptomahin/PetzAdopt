@@ -360,6 +360,56 @@ async function run() {
 
         });
 
+        //payment intent
+
+        app.post("/create-payment-intent", verifyToken, async (req, res) => {
+            const { price } = req.body;
+            const amount = parseInt(price * 100);
+            try {
+                const paymentIntent = await stripe.paymentIntents.create({
+                    amount: amount,
+                    currency: 'usd',
+                    payment_method_types: ["card"],
+                });
+                res.send({
+                    clientSecret: paymentIntent.client_secret,
+                })
+            } catch (error) {
+                console.error('Error creating payment intent:', error);
+                res.status(500).send({ error: 'Payment intent creation failed' });
+            }
+        });
+
+
+
+        app.post('/payments', verifyToken, async (req, res) => {
+            const payment = req.body;
+            const { campaignId, amount } = payment;
+            const amountNumber = parseFloat(amount);
+
+            const query = {
+                _id: new ObjectId(campaignId)
+            }
+            try {
+                const paymentResult = await paymentCollection.insertOne(payment);
+                const campaign = await campaignCollection.findOne(query);
+                const donatedAmountNumber = parseFloat(campaign.donatedAmount || 0);
+                const newDonatedAmount = amountNumber + donatedAmountNumber;
+
+                const updatedCampaign = await campaignCollection.findOneAndUpdate(
+                    query,
+                    { $set: { donatedAmount: newDonatedAmount.toString() } },
+                    { returnOriginal: false }
+                );
+
+                res.send(updatedCampaign.value);
+            } catch (error) {
+                console.error("Error processing payment:", error);
+                res.status(500).send("Error processing payment");
+            }
+
+        });
+
 
         // await client.db('admin').command({ ping: 1 })
         console.log(
