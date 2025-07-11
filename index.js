@@ -33,6 +33,7 @@ async function run() {
         const petsCollection = client.db("petzAdopt").collection("pets");
         const campaignCollection = client.db("petzAdopt").collection("donationCampaigns");
         const usersCollection = client.db("petzAdopt").collection("users");
+        const testimonialsCollection = client.db("petzAdopt").collection("testimonials");
 
 
         // jwt
@@ -408,6 +409,203 @@ async function run() {
                 res.status(500).send("Error processing payment");
             }
 
+        });
+
+
+        // Get all testimonials (for displaying)
+        app.get('/testimonials', async (req, res) => {
+            try {
+                const options = {
+                    sort: { createdAt: -1 }, // Sort by newest first
+                };
+                const result = await testimonialsCollection.find({}, options).toArray();
+                res.send(result);
+            } catch (error) {
+                console.error('Error fetching testimonials:', error);
+                res.status(500).json({ message: 'An error occurred while fetching testimonials' });
+            }
+        });
+
+        // Get single testimonial by ID
+        app.get('/testimonials/:id', async (req, res) => {
+            try {
+                const id = req.params.id;
+                const query = { _id: new ObjectId(id) };
+                const result = await testimonialsCollection.findOne(query);
+
+                if (!result) {
+                    return res.status(404).json({ message: 'Testimonial not found' });
+                }
+
+                res.send(result);
+            } catch (error) {
+                console.error('Error fetching testimonial:', error);
+                res.status(500).json({ message: 'An error occurred while fetching the testimonial' });
+            }
+        });
+
+        // Post new testimonial
+        app.post('/testimonials', async (req, res) => {
+            try {
+                const testimonial = req.body;
+
+                // Validate required fields
+                if (!testimonial.name || !testimonial.email || !testimonial.testimonial) {
+                    return res.status(400).json({
+                        message: 'Missing required fields: name, email, and testimonial are required'
+                    });
+                }
+
+                // Validate email format
+                const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                if (!emailRegex.test(testimonial.email)) {
+                    return res.status(400).json({
+                        message: 'Invalid email format'
+                    });
+                }
+
+                // Validate stars rating
+                if (testimonial.stars && (testimonial.stars < 1 || testimonial.stars > 5)) {
+                    return res.status(400).json({
+                        message: 'Stars rating must be between 1 and 5'
+                    });
+                }
+
+                // Create testimonial object with additional fields
+                const newTestimonial = {
+                    ...testimonial,
+                    stars: testimonial.stars || 5, // Default to 5 stars if not provided
+                    profile_picture: testimonial.profile_picture || `https://ui-avatars.com/api/?name=${encodeURIComponent(testimonial.name)}&background=random&color=fff&size=200`,
+                    createdAt: new Date(),
+                    updatedAt: new Date(),
+                    status: 'pending' // You can add approval system later
+                };
+
+                const result = await testimonialsCollection.insertOne(newTestimonial);
+
+                // Return the created testimonial
+                const createdTestimonial = await testimonialsCollection.findOne({ _id: result.insertedId });
+
+                res.status(201).json({
+                    message: 'Testimonial submitted successfully',
+                    testimonial: createdTestimonial
+                });
+
+            } catch (error) {
+                console.error('Error creating testimonial:', error);
+                res.status(500).json({ message: 'An error occurred while submitting the testimonial' });
+            }
+        });
+
+        // Update testimonial (for admin use)
+        app.put('/testimonials/:id', verifyToken, verifyAdmin, async (req, res) => {
+            try {
+                const id = req.params.id;
+                const updatedDetails = req.body;
+
+                const filter = { _id: new ObjectId(id) };
+                const updateDoc = {
+                    $set: {
+                        ...updatedDetails,
+                        updatedAt: new Date()
+                    }
+                };
+
+                const result = await testimonialsCollection.updateOne(filter, updateDoc);
+
+                if (result.modifiedCount === 1) {
+                    res.json({ message: 'Testimonial updated successfully' });
+                } else {
+                    res.status(404).json({ message: 'Testimonial not found or no changes made' });
+                }
+            } catch (error) {
+                console.error('Error updating testimonial:', error);
+                res.status(500).json({ message: 'An error occurred while updating the testimonial' });
+            }
+        });
+
+        // Delete testimonial (for admin use)
+        app.delete('/testimonials/:id', verifyToken, verifyAdmin, async (req, res) => {
+            try {
+                const id = req.params.id;
+                const result = await testimonialsCollection.deleteOne({ _id: new ObjectId(id) });
+
+                if (result.deletedCount === 1) {
+                    res.json({ message: 'Testimonial deleted successfully' });
+                } else {
+                    res.status(404).json({ message: 'Testimonial not found' });
+                }
+            } catch (error) {
+                console.error('Error deleting testimonial:', error);
+                res.status(500).json({ message: 'An error occurred while deleting the testimonial' });
+            }
+        });
+
+        // Get testimonials with pagination (optional)
+        app.get('/testimonials/paginated', async (req, res) => {
+            try {
+                const offset = parseInt(req.query?.offset) || 0;
+                const limit = parseInt(req.query?.limit) || 10;
+                const status = req.query?.status || 'approved'; // Filter by status
+
+                const query = status === 'all' ? {} : { status: status };
+                const options = {
+                    sort: { createdAt: -1 },
+                };
+
+                const result = await testimonialsCollection.find(query, options)
+                    .skip(offset)
+                    .limit(limit)
+                    .toArray();
+
+                const total = await testimonialsCollection.countDocuments(query);
+
+                res.json({
+                    testimonials: result,
+                    pagination: {
+                        offset,
+                        limit,
+                        total,
+                        hasMore: offset + limit < total
+                    }
+                });
+            } catch (error) {
+                console.error('Error fetching paginated testimonials:', error);
+                res.status(500).json({ message: 'An error occurred while fetching testimonials' });
+            }
+        });
+
+        // Approve/Reject testimonial (for admin use)
+        app.patch('/testimonials/:id/status', verifyToken, verifyAdmin, async (req, res) => {
+            try {
+                const id = req.params.id;
+                const { status } = req.body;
+
+                if (!['approved', 'rejected', 'pending'].includes(status)) {
+                    return res.status(400).json({
+                        message: 'Invalid status. Must be approved, rejected, or pending'
+                    });
+                }
+
+                const filter = { _id: new ObjectId(id) };
+                const updateDoc = {
+                    $set: {
+                        status: status,
+                        updatedAt: new Date()
+                    }
+                };
+
+                const result = await testimonialsCollection.updateOne(filter, updateDoc);
+
+                if (result.modifiedCount === 1) {
+                    res.json({ message: `Testimonial ${status} successfully` });
+                } else {
+                    res.status(404).json({ message: 'Testimonial not found' });
+                }
+            } catch (error) {
+                console.error('Error updating testimonial status:', error);
+                res.status(500).json({ message: 'An error occurred while updating the testimonial status' });
+            }
         });
 
 
