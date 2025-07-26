@@ -34,6 +34,7 @@ async function run() {
         const campaignCollection = client.db("petzAdopt").collection("donationCampaigns");
         const usersCollection = client.db("petzAdopt").collection("users");
         const testimonialsCollection = client.db("petzAdopt").collection("testimonials");
+        const paymentCollection = client.db("petzAdopt").collection("payments");
 
 
         // jwt
@@ -408,6 +409,62 @@ async function run() {
                 console.error("Error processing payment:", error);
                 res.status(500).send("Error processing payment");
             }
+
+        });
+
+        app.get('/donors/:id', verifyToken, async (req, res) => {
+            const id = req.params.id;
+            const query = { campaignId: id };
+            const result = await paymentCollection.find(query).toArray();
+            res.send(result)
+
+        })
+
+        app.get('/my-donations/:email', verifyToken, async (req, res) => {
+            const email = req?.params?.email;
+
+            const donations = await paymentCollection.aggregate([
+                { $match: { email } },
+                {
+                    $addFields: {
+                        campaignObjectId: { $toObjectId: "$campaignId" }
+                    }
+                },
+                {
+                    $lookup: {
+                        from: 'donationCampaigns',
+                        localField: 'campaignObjectId',
+                        foreignField: '_id',
+                        as: 'campaignDetails'
+                    }
+                },
+                { $unwind: '$campaignDetails' },
+                {
+                    $project: {
+                        _id: 0,
+                        petImage: '$campaignDetails.petImage',
+                        petName: '$campaignDetails.petName',
+                        donatedAmount: '$amount',
+                        campaignId: '$campaignDetails._id',
+                        paymentId: '$_id'
+                    }
+                }
+            ]).toArray();
+            //refund 
+            app.delete('/payment/refund/:id', async (req, res) => {
+                const id = req.params.id;
+                try {
+                    const result = await paymentCollection.deleteOne({ _id: new ObjectId(id) });
+                    if (result.deletedCount === 1) {
+                        res.json({ message: 'payment deleted successfully' });
+                    }
+                } catch (error) {
+                    console.error('Error deleting pet:', error);
+                    res.status(500).json({ message: 'An error occurred while deleting the pet' });
+                }
+            });
+
+            res.send(donations);
 
         });
 
