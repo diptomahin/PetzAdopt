@@ -31,6 +31,7 @@ async function run() {
     try {
 
         const petsCollection = client.db("petzAdopt").collection("pets");
+        const adoptCollection = client.db("petzAdopt").collection("adopts");
         const campaignCollection = client.db("petzAdopt").collection("donationCampaigns");
         const usersCollection = client.db("petzAdopt").collection("users");
         const testimonialsCollection = client.db("petzAdopt").collection("testimonials");
@@ -125,15 +126,47 @@ async function run() {
         })
 
         app.put('/user/update/:id', verifyToken, verifyAdmin, async (req, res) => {
-            const id = req?.params?.id;
-            const query = { _id: new ObjectId(id) }
-            const updateDoc = {
-                $set: {
-                    role: 'admin'
+            try {
+                const id = req?.params?.id;
+                const { role } = req.body; // Get the role from request body
+
+                // Validate the role
+                if (!role || (role !== 'admin' && role !== 'user')) {
+                    return res.status(400).send({
+                        success: false,
+                        message: 'Invalid role. Role must be either "admin" or "user".'
+                    });
                 }
+
+                const query = { _id: new ObjectId(id) }
+                const updateDoc = {
+                    $set: {
+                        role: role
+                    }
+                }
+
+                const result = await usersCollection.updateOne(query, updateDoc);
+
+                if (result.modifiedCount === 0) {
+                    return res.status(404).send({
+                        success: false,
+                        message: 'User not found or role unchanged.'
+                    });
+                }
+
+                res.send({
+                    success: true,
+                    message: `User role updated to ${role} successfully.`,
+                    result
+                });
+
+            } catch (error) {
+                console.error('Error updating user role:', error);
+                res.status(500).send({
+                    success: false,
+                    message: 'Internal server error'
+                });
             }
-            const result = await usersCollection.updateOne(query, updateDoc);
-            res.send(result)
         })
 
         //pets
@@ -213,13 +246,23 @@ async function run() {
             const id = req.params.id;
             const filter = { _id: new ObjectId(id) };
             const adopt = await petsCollection.findOne(filter);
-            const updatedDoc = {
+            const query = { petId: new ObjectId(id) }
+
+            const updateDoc = {
                 $set: {
-                    adopted: !(adopt?.adopted)
+                    adopted: true
+                }
+            };
+
+            const updateAdoptionDoc = {
+                $set: {
+                    status: "Adopted"
                 }
             }
-            const result = await petsCollection.updateOne(filter, updatedDoc);
-            res.send(result);
+            const result = await petsCollection.updateOne(filter, updateDoc);
+            const AdoptionResult = await adoptCollection.updateOne(query, updateAdoptionDoc);
+
+            res.send({ result, AdoptionResult })
         })
 
 
@@ -238,6 +281,68 @@ async function run() {
                 res.status(500).json({ message: 'An error occurred while deleting the pet' });
             }
         });
+
+        //adopting
+        app.post('/adopts', verifyToken, async (req, res) => {
+            const requestedPet = req.body;
+            const query = { email: requestedPet?.email, petId: requestedPet?.petId };
+
+            const isExist = await adoptCollection.findOne(query);
+            if (isExist) {
+                // console.log("already exist");
+                res.status(409).send({ message: "Already exist" });
+            } else {
+                const result = await adoptCollection.insertOne(requestedPet);
+                res.status(201).send(result);
+            }
+        });
+        app.get('/adoption-requests/:email', verifyToken, async (req, res) => {
+            const email = req?.params?.email;
+            const query = { ownerEmail: email };
+            const result = await adoptCollection.find(query).toArray();
+            res.send(result);
+        });
+
+
+        app.put('/adoption-requests/accept', verifyToken, async (req, res) => {
+            const adoption = req.body;
+            const { petId, _id } = adoption;
+            const query = { _id: new ObjectId(petId) }
+            const adoptionQuery = { _id: new ObjectId(_id) }
+
+
+            const updateDoc = {
+                $set: {
+                    adopted: true
+                }
+            };
+
+            const updateAdoptionDoc = {
+                $set: {
+                    status: "Adopted"
+                }
+            };
+            const result = await petsCollection.updateOne(query, updateDoc);
+            const AdoptionResult = await adoptCollection.updateOne(adoptionQuery, updateAdoptionDoc);
+
+
+            // console.log(result, AdoptionResult)
+            res.send({ result, AdoptionResult })
+        })
+
+        app.delete('/adoption-request/delete/:id', verifyToken, async (req, res) => {
+            const id = req.params.id;
+            try {
+                const result = await adoptCollection.deleteOne({ _id: new ObjectId(id) });
+                if (result.deletedCount === 1) {
+                    res.json({ message: 'Pet deleted successfully' });
+                }
+            } catch (error) {
+                console.error('Error deleting pet:', error);
+                res.status(500).json({ message: 'An error occurred while deleting the pet' });
+            }
+        });
+
 
         //Campaigns
 
