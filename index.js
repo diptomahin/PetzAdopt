@@ -8,7 +8,7 @@ const jwt = require('jsonwebtoken')
 const port = process.env.PORT || 8000
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
 const corsOptions = {
-    origin: ['http://localhost:5173'],
+    origin: ['http://localhost:5173', 'https://petz-adopt-client.vercel.app'],
     credentials: true,
     optionSuccessStatus: 200,
 }
